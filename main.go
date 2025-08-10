@@ -62,6 +62,8 @@ func main() {
 	api.HandleFunc("GET /healthz", healthzHandler)
 	api.HandleFunc("POST /users", apiConfig.makeUserHandler)
 	api.HandleFunc("POST /chirps", apiConfig.chirpHandler)
+	api.HandleFunc("GET /chirps", apiConfig.allChirpsHandler)
+	api.HandleFunc("GET /chirps/{chirpID}", apiConfig.getChirpHandler)
 
 
 
@@ -183,11 +185,11 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 			log.Printf("Error marshaling data")
 		}
 
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(statusCode)
-			w.Write(data)
-			return
-		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		w.Write(data)
+		return
+	}
 
 
 	replaceArr := []string{"kerfuffle", "sharbert", "fornax"}
@@ -216,7 +218,7 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	type response struct {
+	type Chirp struct {
 		ID        uuid.UUID		`json:"id"`
 		CreatedAt time.Time		`json:"created_at"`
 		UpdatedAt time.Time		`json:"updated_at"`
@@ -224,7 +226,7 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 		UserID    uuid.UUID		`json:"user_id"`
 	}
 
-	res := response {
+	res := Chirp {
 		ID: curChirp.ID,
 		CreatedAt: curChirp.CreatedAt,
 		UpdatedAt: curChirp.UpdatedAt,
@@ -242,7 +244,6 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 	}
 
 
-	log.Printf("Error decoding parameters: %s", err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	w.Write(data)
@@ -343,4 +344,98 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		w.Write(data)
 
+}
+
+
+func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) {
+
+	allChirps, err := cfg.db.GetAllChirps(r.Context())
+
+	if err != nil {
+		log.Printf("Failed to retreive chirps")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type ChirpResponse struct {
+		ID        uuid.UUID		`json:"id"`
+		CreatedAt time.Time		`json:"created_at"`
+		UpdatedAt time.Time		`json:"updated_at"`
+		Body      string		`json:"body"`
+		UserID    uuid.UUID		`json:"user_id"`
+	}
+
+	var res []ChirpResponse;
+
+	for _, chirp := range allChirps {
+		res = append(res, ChirpResponse{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		})
+	}
+
+	data, err := json.Marshal(res)
+
+	if err != nil {
+		log.Printf("Error marshaling data")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
+
+func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
+
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+
+	if err != nil {
+		log.Printf("Failed to parse chirp ID")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
+
+	if err != nil {
+		log.Printf("Failed to retreive chirp")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	type ChirpResponse struct {
+		ID        uuid.UUID		`json:"id"`
+		CreatedAt time.Time		`json:"created_at"`
+		UpdatedAt time.Time		`json:"updated_at"`
+		Body      string		`json:"body"`
+		UserID    uuid.UUID		`json:"user_id"`
+	}
+
+	res := ChirpResponse{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+
+
+	data, err := json.Marshal(res)
+
+	if err != nil {
+		log.Printf("Error marshaling data")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }
