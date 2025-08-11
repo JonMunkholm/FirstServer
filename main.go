@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/JonMunkholm/server/internal/auth"
 	"github.com/JonMunkholm/server/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -61,6 +62,7 @@ func main() {
 	admin.HandleFunc("POST /reset", apiConfig.resetHandler)
 	api.HandleFunc("GET /healthz", healthzHandler)
 	api.HandleFunc("POST /users", apiConfig.makeUserHandler)
+	api.HandleFunc("POST /login", apiConfig.loginHandler)
 	api.HandleFunc("POST /chirps", apiConfig.chirpHandler)
 	api.HandleFunc("GET /chirps", apiConfig.allChirpsHandler)
 	api.HandleFunc("GET /chirps/{chirpID}", apiConfig.getChirpHandler)
@@ -91,7 +93,7 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
-func healthzHandler(w http.ResponseWriter, r *http.Request){
+func healthzHandler (w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte("OK"))
@@ -100,7 +102,7 @@ func healthzHandler(w http.ResponseWriter, r *http.Request){
 	}
 }
 
-func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request){
+func (cfg *apiConfig) metricsHandler (w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	count := cfg.fileserverHits.Load()
@@ -109,7 +111,7 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request){
 	w.Write([]byte(content))
 }
 
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request){
+func (cfg *apiConfig) resetHandler (w http.ResponseWriter, r *http.Request){
 
 	if cfg.platform != "dev" {
 
@@ -143,7 +145,7 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request){
 	w.Write([]byte("Hits reset to 0 and database reset to initial state."))
 }
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+func (cfg *apiConfig) middlewareMetricsInc (next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 		cfg.fileserverHits.Add(1)
@@ -254,6 +256,7 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
 	type param struct {
+		Password string  `json:"password"`
 		Email    string  `json:"email"`
 	}
 
@@ -290,17 +293,15 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 	}
 
 
-
-	type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	hashedPass, err := auth.HashPassword(request.Password)
+	if err != nil {
+		log.Printf("Password hash error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	var user User
-	var usr database.User
-	usr, err = cfg.db.CreateUser(r.Context(), request.Email)
+	usr, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{Email: request.Email, HashedPassword: hashedPass})
+
 
 	//Fail to add user request, return error message
 	if err != nil {
@@ -317,7 +318,7 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			log.Printf("Error marshaling data")
-			}
+		}
 
 
 		w.Header().Set("Content-Type", "application/json")
@@ -325,6 +326,15 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 		w.Write(data)
 		return
 	}
+
+	type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	}
+
+	var user User
 
 	user.ID = usr.ID
 	user.CreatedAt = usr.CreatedAt
@@ -438,4 +448,90 @@ func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
+}
+
+
+
+func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
+	type param struct {
+		Password string  `json:"password"`
+		Email    string  `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+
+	var request param
+
+	err := decoder.Decode(&request)
+
+	//Fail decoding request, return error message
+	if err != nil {
+
+		type response struct {
+			Error   string  `json:"error"`
+		}
+
+		res := response{
+			Error: "Error decoding parameters, unable to create user",
+		}
+
+		data, err := json.Marshal(res)
+
+		if err != nil {
+			log.Printf("Error marshaling data")
+			} else {
+				log.Printf("Error decoding parameters: %s", err)
+			}
+
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write(data)
+		return
+	}
+
+	user, err := cfg.db.GetUser(r.Context(),request.Email)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Incorrect email or password"})
+		return
+	}
+
+	err = auth.CheckPasswordHash(request.Password, user.HashedPassword)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Incorrect email or password"})
+		return
+	}
+
+	type userResponse struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	}
+
+	var res userResponse
+
+	res.ID = user.ID
+	res.CreatedAt = user.CreatedAt
+	res.UpdatedAt = user.UpdatedAt
+	res.Email = user.Email
+
+	data, err := json.Marshal(res)
+
+		if err != nil {
+			log.Printf("Error marshaling data")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
 }
