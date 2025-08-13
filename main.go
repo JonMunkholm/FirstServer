@@ -23,9 +23,10 @@ const port = "8080"
 
 
 type apiConfig struct {
-fileserverHits atomic.Int32
-db      *database.Queries
-platform    string
+fileserverHits 	atomic.Int32
+db      		*database.Queries
+platform    	string
+secret  		string
 }
 
 
@@ -48,6 +49,13 @@ func main() {
 		log.Fatal("Failed to connect to DB", err)
 	}
 
+	jwtSecret := os.Getenv("SECRET")
+
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET must be set")
+	}
+
+
 	dbQueries := database.New(db)
 
 	mux := http.NewServeMux()
@@ -57,6 +65,7 @@ func main() {
 
 	apiConfig.db = dbQueries
 	apiConfig.platform = platform
+	apiConfig.secret = jwtSecret
 
 	admin.HandleFunc("GET /metrics", apiConfig.metricsHandler)
 	admin.HandleFunc("POST /reset", apiConfig.resetHandler)
@@ -158,7 +167,6 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 	statusCode := http.StatusCreated
 	type param struct {
 		Body    	string  	`json:"body"`
-		UserID 		uuid.UUID   `json:"user_id"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -193,6 +201,23 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	bearerToken, err := auth.GetBearerToken(r.Header)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("Unable to retrieve Bearer token: %v", err)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("Failed to validate user: %v", err)
+		return
+	}
 
 	replaceArr := []string{"kerfuffle", "sharbert", "fornax"}
 	content := strings.Split(request.Body, " ")
@@ -210,7 +235,7 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 
 	curChirp, err = cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body: request.Body,
-		UserID: request.UserID,
+		UserID: userID,
 	})
 
 	if err != nil {
@@ -454,8 +479,9 @@ func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 	type param struct {
-		Password string  `json:"password"`
-		Email    string  `json:"email"`
+		Password 	string  `json:"password"`
+		Email    	string  `json:"email"`
+		ExpiresIn	*int `json:"expires_in_seconds"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -484,11 +510,18 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 			}
 
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(data)
-		return
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write(data)
+			return
+		}
+
+	expirationSeconds := 3600 // default to 1 hour
+
+	if request.ExpiresIn != nil && *request.ExpiresIn < 3600 {
+		expirationSeconds = *request.ExpiresIn
 	}
+
 
 	user, err := cfg.db.GetUser(r.Context(),request.Email)
 
@@ -508,11 +541,21 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	token, err := auth.MakeJWT(user.ID, cfg.secret, time.Duration(expirationSeconds) * time.Second)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("Unable to generate JWT: %v", err)
+		return
+	}
+
 	type userResponse struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token	  string	`json:"token"`
 	}
 
 	var res userResponse
@@ -521,17 +564,18 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 	res.CreatedAt = user.CreatedAt
 	res.UpdatedAt = user.UpdatedAt
 	res.Email = user.Email
+	res.Token = token
 
 	data, err := json.Marshal(res)
 
-		if err != nil {
-			log.Printf("Error marshaling data")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+	if err != nil {
+		log.Printf("Error marshaling data")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }
