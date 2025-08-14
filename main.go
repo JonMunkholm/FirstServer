@@ -194,6 +194,7 @@ func (cfg *apiConfig) resetHandler (w http.ResponseWriter, r *http.Request){
 	w.Write([]byte("Hits reset to 0 and database reset to initial state."))
 }
 
+
 func (cfg *apiConfig) middlewareMetricsInc (next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
@@ -291,6 +292,67 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 }
 
 
+func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) {
+
+	allChirps, err := cfg.db.GetAllChirps(r.Context())
+
+	if err != nil {
+		log.Printf("Failed to retreive chirps")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var res []chirpResponse;
+
+	for _, chirp := range allChirps {
+		res = append(res, chirpResponse{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		})
+	}
+
+	err = marshalHelper(w ,res, http.StatusOK)
+	if err != nil {
+		fmt.Printf("get all chirps: %v", err)
+	}
+}
+
+
+func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
+
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+
+	if err != nil {
+		log.Printf("Failed to parse chirp ID")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
+
+	if err != nil {
+		log.Printf("Failed to retreive chirp")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	res := chirpResponse{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+
+
+		err = marshalHelper(w ,res, http.StatusOK)
+		if err != nil {
+		fmt.Printf("get chirp: %v", err)
+	}
+}
+
 
 func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
@@ -360,69 +422,6 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 }
 
 
-func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) {
-
-	allChirps, err := cfg.db.GetAllChirps(r.Context())
-
-	if err != nil {
-		log.Printf("Failed to retreive chirps")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	var res []chirpResponse;
-
-	for _, chirp := range allChirps {
-		res = append(res, chirpResponse{
-			ID:        chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body:      chirp.Body,
-			UserID:    chirp.UserID,
-		})
-	}
-
-	err = marshalHelper(w ,res, http.StatusOK)
-	if err != nil {
-		fmt.Printf("get all chirps: %v", err)
-	}
-}
-
-
-func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
-
-	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
-
-	if err != nil {
-		log.Printf("Failed to parse chirp ID")
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
-
-	if err != nil {
-		log.Printf("Failed to retreive chirp")
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	res := chirpResponse{
-			ID:        chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body:      chirp.Body,
-			UserID:    chirp.UserID,
-		}
-
-
-	err = marshalHelper(w ,res, http.StatusOK)
-	if err != nil {
-		fmt.Printf("get chirp: %v", err)
-	}
-}
-
-
-
 func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(r.Body)
@@ -445,7 +444,7 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("user login: %v", err)
 		}
 		return
-		}
+	}
 
 	expirationSeconds := 3600 // default to 1 hour
 
@@ -498,8 +497,6 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 }
 
 
-
-
 func marshalHelper (w http.ResponseWriter, res any, statusCode int) error {
 	data, err := json.Marshal(res)
 
@@ -515,11 +512,3 @@ func marshalHelper (w http.ResponseWriter, res any, statusCode int) error {
 	w.Write(data)
 	return nil
 }
-
-
-
-// func (cfg *apiConfig) middlewareAuth (next http.Handler) http.Handler {
-// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
-
-// 	}
-// }
