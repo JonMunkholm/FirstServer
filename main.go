@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +28,47 @@ platform    	string
 secret  		string
 }
 
+type loginParams struct {
+	Password 	string  `json:"password"`
+	Email    	string  `json:"email"`
+	ExpiresIn	*int `json:"expires_in_seconds"`
+}
+
+type makeUserParams struct {
+	Password 	string  `json:"password"`
+	Email    	string  `json:"email"`
+}
+
+type makeChirpParams struct {
+	Body    	string  `json:"body"`
+}
+
+type chirpResponse struct {
+	ID        uuid.UUID		`json:"id"`
+	CreatedAt time.Time		`json:"created_at"`
+	UpdatedAt time.Time		`json:"updated_at"`
+	Body      string		`json:"body"`
+	UserID    uuid.UUID		`json:"user_id"`
+}
+
+type createdUser struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
+type userResponse struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	Token	  string	`json:"token"`
+}
+
+type errResponse struct {
+	Error   string  `json:"error"`
+}
 
 func main() {
 
@@ -164,40 +204,31 @@ func (cfg *apiConfig) middlewareMetricsInc (next http.Handler) http.Handler {
 
 
 func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
-	statusCode := http.StatusCreated
-	type param struct {
-		Body    	string  	`json:"body"`
-	}
 
 	decoder := json.NewDecoder(r.Body)
 
-	var request param
+	var request makeChirpParams
+
 	err := decoder.Decode(&request)
 
 	if err != nil || len(request.Body) > 140 {
 		statusCode := http.StatusInternalServerError
 
-		type response struct {
-			Error   string  `json:"error"`
-		}
-
-		res := response{
-			Error: "Unable to decode request body",
-		}
+		errString :=fmt.Sprintf("Error, unable to create user: %v", err)
 
 		if len(request.Body) > 140 {
-			res.Error = "Chirp is longer than 140 characters"
+			errString = fmt.Sprintf("Chirp is longer than 140 characters: %v", err)
 			statusCode = http.StatusBadRequest
 		}
-		data, err := json.Marshal(res)
 
-		if err != nil {
-			log.Printf("Error marshaling data")
+		res := errResponse{
+			Error: errString,
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		w.Write(data)
+		err = marshalHelper(w ,res, statusCode)
+		if err != nil {
+			fmt.Printf("create chirp: %v", err)
+		}
 		return
 	}
 
@@ -219,17 +250,18 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	replaceArr := []string{"kerfuffle", "sharbert", "fornax"}
-	content := strings.Split(request.Body, " ")
-	for i := range content {
-		for _, str := range replaceArr {
-			if str == strings.ToLower(content[i]) {
-				content[i] = strings.ToLower(content[i])
-				content[i] = strings.Replace(content[i], str, "****", -1)
-			}
-		}
-	}
-	request.Body = strings.Join(content, " ")
+	// ----------- add profanity clean up here if needed/wanted -----------
+	// replaceArr := []string{"kerfuffle", "sharbert", "fornax"}
+	// content := strings.Split(request.Body, " ")
+	// for i := range content {
+	// 	for _, str := range replaceArr {
+	// 		if str == strings.ToLower(content[i]) {
+	// 			content[i] = strings.ToLower(content[i])
+	// 			content[i] = strings.Replace(content[i], str, "****", -1)
+	// 		}
+	// 	}
+	// }
+	// request.Body = strings.Join(content, " ")
 
 	var curChirp database.Chirp
 
@@ -239,21 +271,12 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 	})
 
 	if err != nil {
-		statusCode = http.StatusInternalServerError
 		log.Printf("Failed to create chirp")
-		w.WriteHeader(statusCode)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	type Chirp struct {
-		ID        uuid.UUID		`json:"id"`
-		CreatedAt time.Time		`json:"created_at"`
-		UpdatedAt time.Time		`json:"updated_at"`
-		Body      string		`json:"body"`
-		UserID    uuid.UUID		`json:"user_id"`
-	}
-
-	res := Chirp {
+	res := chirpResponse{
 		ID: curChirp.ID,
 		CreatedAt: curChirp.CreatedAt,
 		UpdatedAt: curChirp.UpdatedAt,
@@ -261,59 +284,35 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 		UserID: curChirp.UserID,
 	}
 
-	data, err := json.Marshal(res)
-
+	err = marshalHelper(w ,res, http.StatusCreated)
 	if err != nil {
-		statusCode = http.StatusInternalServerError
-		log.Printf("Error marshaling data")
-		w.WriteHeader(statusCode)
-		return
+		fmt.Printf("create chirp: %v", err)
 	}
-
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	w.Write(data)
 }
 
 
 
 func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
-	type param struct {
-		Password string  `json:"password"`
-		Email    string  `json:"email"`
-	}
-
 	decoder := json.NewDecoder(r.Body)
 
-	var request param
+	var request makeUserParams
 
 	err := decoder.Decode(&request)
 
 	//Fail decoding request, return error message
 	if err != nil {
 
-		type response struct {
-			Error   string  `json:"error"`
+		errString := fmt.Sprintf("Error decoding parameters, unable to create user: %v", err)
+
+		res := errResponse{
+			Error: errString,
 		}
 
-		res := response{
-			Error: "Error decoding parameters, unable to create user",
-		}
-
-		data, err := json.Marshal(res)
-
+		err = marshalHelper(w ,res, http.StatusInternalServerError)
 		if err != nil {
-			log.Printf("Error marshaling data")
-			} else {
-				log.Printf("Error decoding parameters: %s", err)
-			}
-
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(data)
+			fmt.Printf("create user: %v", err)
+		}
 		return
 	}
 
@@ -325,59 +324,38 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usr, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{Email: request.Email, HashedPassword: hashedPass})
+	user, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{Email: request.Email, HashedPassword: hashedPass})
 
 
 	//Fail to add user request, return error message
 	if err != nil {
-		fmt.Printf("something went wrong: %v", err)
-		type response struct {
-			Error   string  `json:"error"`
+		errString :=fmt.Sprintf("Error, unable to create user: %v", err)
+
+		res := errResponse{
+			Error: errString,
 		}
 
-		res := response{
-			Error: "Error, unable to create user",
-		}
-
-		data, err := json.Marshal(res)
-
+		err = marshalHelper(w ,res, http.StatusInternalServerError)
 		if err != nil {
-			log.Printf("Error marshaling data")
+			fmt.Printf("create user: %v", err)
 		}
-
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(data)
 		return
 	}
 
-	type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+
+
+	res := createdUser{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
 	}
 
-	var user User
 
-	user.ID = usr.ID
-	user.CreatedAt = usr.CreatedAt
-	user.UpdatedAt = usr.UpdatedAt
-	user.Email = usr.Email
-
-	data, err := json.Marshal(user)
-
-		if err != nil {
-			log.Printf("Error marshaling data")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		w.Write(data)
+	err = marshalHelper(w ,res, http.StatusCreated)
+	if err != nil {
+		fmt.Printf("create user: %v", err)
+	}
 
 }
 
@@ -392,18 +370,10 @@ func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	type ChirpResponse struct {
-		ID        uuid.UUID		`json:"id"`
-		CreatedAt time.Time		`json:"created_at"`
-		UpdatedAt time.Time		`json:"updated_at"`
-		Body      string		`json:"body"`
-		UserID    uuid.UUID		`json:"user_id"`
-	}
-
-	var res []ChirpResponse;
+	var res []chirpResponse;
 
 	for _, chirp := range allChirps {
-		res = append(res, ChirpResponse{
+		res = append(res, chirpResponse{
 			ID:        chirp.ID,
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
@@ -412,18 +382,10 @@ func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	data, err := json.Marshal(res)
-
+	err = marshalHelper(w ,res, http.StatusOK)
 	if err != nil {
-		log.Printf("Error marshaling data")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		fmt.Printf("get all chirps: %v", err)
 	}
-
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(data)
 }
 
 
@@ -444,15 +406,7 @@ func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type ChirpResponse struct {
-		ID        uuid.UUID		`json:"id"`
-		CreatedAt time.Time		`json:"created_at"`
-		UpdatedAt time.Time		`json:"updated_at"`
-		Body      string		`json:"body"`
-		UserID    uuid.UUID		`json:"user_id"`
-	}
-
-	res := ChirpResponse{
+	res := chirpResponse{
 			ID:        chirp.ID,
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
@@ -461,59 +415,36 @@ func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
 		}
 
 
-	data, err := json.Marshal(res)
-
+	err = marshalHelper(w ,res, http.StatusOK)
 	if err != nil {
-		log.Printf("Error marshaling data")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		fmt.Printf("get chirp: %v", err)
 	}
-
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(data)
 }
 
 
 
 func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
-	type param struct {
-		Password 	string  `json:"password"`
-		Email    	string  `json:"email"`
-		ExpiresIn	*int `json:"expires_in_seconds"`
-	}
 
 	decoder := json.NewDecoder(r.Body)
 
-	var request param
+	var request loginParams
 
 	err := decoder.Decode(&request)
 
 	//Fail decoding request, return error message
 	if err != nil {
 
-		type response struct {
-			Error   string  `json:"error"`
+		errString := fmt.Sprintf("Error decoding parameters, unable to login: %v", err)
+
+		res := errResponse{
+			Error: errString,
 		}
 
-		res := response{
-			Error: "Error decoding parameters, unable to create user",
-		}
-
-		data, err := json.Marshal(res)
-
+		err = marshalHelper(w ,res, http.StatusInternalServerError)
 		if err != nil {
-			log.Printf("Error marshaling data")
-			} else {
-				log.Printf("Error decoding parameters: %s", err)
-			}
-
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write(data)
-			return
+			fmt.Printf("user login: %v", err)
+		}
+		return
 		}
 
 	expirationSeconds := 3600 // default to 1 hour
@@ -550,32 +481,45 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type userResponse struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token	  string	`json:"token"`
+	res := userResponse{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+		Token: token,
 	}
 
-	var res userResponse
 
-	res.ID = user.ID
-	res.CreatedAt = user.CreatedAt
-	res.UpdatedAt = user.UpdatedAt
-	res.Email = user.Email
-	res.Token = token
+	err = marshalHelper(w ,res, http.StatusOK)
+	if err != nil {
+		fmt.Printf("user login: %v", err)
+	}
 
+}
+
+
+
+
+func marshalHelper (w http.ResponseWriter, res any, statusCode int) error {
 	data, err := json.Marshal(res)
 
 	if err != nil {
 		log.Printf("Error marshaling data")
 		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return err
 	}
 
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 	w.Write(data)
+	return nil
 }
+
+
+
+// func (cfg *apiConfig) middlewareAuth (next http.Handler) http.Handler {
+// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+
+// 	}
+// }
