@@ -95,7 +95,12 @@ func MakeRefreshToken () (string, error) {
 
 	// Fill the byte slice with cryptographically secure random bytes
 	// Error handling not necessary, as Read always succeeds (per documentation)
-	rand.Read(key)
+	_, err := rand.Read(key)
+
+	//handeling theoretical error
+	if err != nil {
+		return "", err
+	}
 
 	// Encode the byte slice directly to a hexadecimal string
 	dataStrHex := hex.EncodeToString(key)
