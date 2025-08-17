@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,12 +28,7 @@ platform    	string
 secret  		string
 }
 
-type loginParams struct {
-	Password 	string  `json:"password"`
-	Email    	string  `json:"email"`
-}
-
-type makeUserParams struct {
+type userPerams struct {
 	Password 	string  `json:"password"`
 	Email    	string  `json:"email"`
 }
@@ -51,14 +45,14 @@ type chirpResponse struct {
 	UserID    uuid.UUID		`json:"user_id"`
 }
 
-type createdUser struct {
+type userInfoResponse struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
 }
 
-type userResponse struct {
+type userSessionResponse struct {
 	ID        		uuid.UUID `json:"id"`
 	CreatedAt 		time.Time `json:"created_at"`
 	UpdatedAt 		time.Time `json:"updated_at"`
@@ -120,12 +114,14 @@ func main() {
 	admin.HandleFunc("POST /reset", apiConfig.resetHandler)
 	api.HandleFunc("GET /healthz", healthzHandler)
 	api.HandleFunc("POST /users", apiConfig.makeUserHandler)
+	api.HandleFunc("PUT /users", apiConfig.updateUserHandler)
 	api.HandleFunc("POST /login", apiConfig.loginHandler)
-	api.HandleFunc("POST /chirps", apiConfig.chirpHandler)
 	api.HandleFunc("POST /refresh", apiConfig.tokenRefreshHandler)
 	api.HandleFunc("POST /revoke", apiConfig.tokenRevokeHandler)
+	api.HandleFunc("POST /chirps", apiConfig.chirpHandler)
 	api.HandleFunc("GET /chirps", apiConfig.allChirpsHandler)
 	api.HandleFunc("GET /chirps/{chirpID}", apiConfig.getChirpHandler)
+
 
 
 
@@ -153,6 +149,7 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
+
 func healthzHandler (w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -162,6 +159,7 @@ func healthzHandler (w http.ResponseWriter, r *http.Request){
 	}
 }
 
+
 func (cfg *apiConfig) metricsHandler (w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -170,6 +168,7 @@ func (cfg *apiConfig) metricsHandler (w http.ResponseWriter, r *http.Request){
 	content := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", count)
 	w.Write([]byte(content))
 }
+
 
 func (cfg *apiConfig) resetHandler (w http.ResponseWriter, r *http.Request){
 
@@ -216,7 +215,7 @@ func (cfg *apiConfig) middlewareMetricsInc (next http.Handler) http.Handler {
 
 
 func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
-
+	//expecting session/JWT token as bearer token
 	decoder := json.NewDecoder(r.Body)
 
 	var request makeChirpParams
@@ -369,7 +368,7 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(r.Body)
 
-	var request makeUserParams
+	var request userPerams
 
 	err := decoder.Decode(&request)
 
@@ -391,6 +390,7 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
 
 	hashedPass, err := auth.HashPassword(request.Password)
+
 	if err != nil {
 		log.Printf("Password hash error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -417,7 +417,7 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 
 
 
-	res := createdUser{
+	res := userInfoResponse{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
@@ -437,7 +437,7 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(r.Body)
 
-	var request loginParams
+	var request userPerams
 
 	err := decoder.Decode(&request)
 
@@ -506,7 +506,7 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := userResponse{
+	res := userSessionResponse{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
@@ -523,29 +523,115 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 
 }
 
+
+func (cfg *apiConfig) updateUserHandler (w http.ResponseWriter, r *http.Request) {
+	//expecting session/JWT token as bearer token
+	decoder := json.NewDecoder(r.Body)
+
+	var request userPerams
+
+	err := decoder.Decode(&request)
+
+	//Fail decoding request, return error message
+	if err != nil {
+
+		errString := fmt.Sprintf("Error decoding parameters, unable to update user: %v", err)
+
+		res := errResponse{
+			Error: errString,
+		}
+
+		err = marshalHelper(w ,res, http.StatusInternalServerError)
+		if err != nil {
+			fmt.Printf("update user: %v", err)
+		}
+		return
+	}
+
+	bearerToken, err := auth.GetBearerToken(r.Header)
+
+	if err != nil {
+		err := marshalHelper(w ,bearerToken, http.StatusUnauthorized)
+		if err != nil {
+			fmt.Printf("update user: %v", err)
+		}
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("Failed to validate user: %v", err)
+		return
+	}
+
+	hashedPass, err := auth.HashPassword(request.Password)
+
+	if err != nil {
+		log.Printf("Password hash error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	err = cfg.db.UpdateUser(r.Context(), database.UpdateUserParams{ID: userID, Email: request.Email, HashedPassword: hashedPass})
+
+
+	//Fail to add user request, return error message
+	if err != nil {
+		errString :=fmt.Sprintf("Error, unable to update user: %v", err)
+
+		res := errResponse{
+			Error: errString,
+		}
+
+		err = marshalHelper(w ,res, http.StatusInternalServerError)
+		if err != nil {
+			fmt.Printf("update user: %v", err)
+		}
+		return
+	}
+
+	user, err := cfg.db.GetUser(r.Context(),request.Email)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Incorrect email or password"})
+		return
+	}
+
+	res := userInfoResponse{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	}
+
+
+	err = marshalHelper(w ,res, http.StatusOK)
+	if err != nil {
+		fmt.Printf("create user: %v", err)
+	}
+
+
+}
+
+
 func (cfg *apiConfig) tokenRefreshHandler (w http.ResponseWriter, r *http.Request) {
+	//expecting refresh token as bearer token
+	bearerToken, err := auth.GetBearerToken(r.Header)
 
-	if len(r.Header.Values("Authorization")) <= 0 {
-		err := marshalHelper(w ,r.Header.Values("Authorization"), http.StatusUnauthorized)
+	if err != nil {
+		err := marshalHelper(w ,bearerToken, http.StatusUnauthorized)
 		if err != nil {
 			fmt.Printf("token refresh: %v", err)
 		}
 		return
 	}
 
-	tokenString := r.Header.Values("Authorization")[0]
-
-	token := strings.TrimSpace(strings.TrimPrefix(tokenString, "Bearer "))
-
-	if token == "" {
-		err := marshalHelper(w ,token, http.StatusUnauthorized)
-		if err != nil {
-			fmt.Printf("token refresh: %v", err)
-		}
-		return
-	}
-
-	refreshToken, err := cfg.db.IsValidRefreshToken(r.Context(), token)
+	refreshToken, err := cfg.db.IsValidRefreshToken(r.Context(), bearerToken)
 
 	if err != nil {
 		err := marshalHelper(w ,refreshToken, http.StatusUnauthorized)
@@ -575,24 +661,15 @@ func (cfg *apiConfig) tokenRefreshHandler (w http.ResponseWriter, r *http.Reques
 		fmt.Printf("token refresh: %v", err)
 	}
 
-	return
+
 }
 
+
 func (cfg *apiConfig) tokenRevokeHandler (w http.ResponseWriter, r *http.Request) {
+	//expecting refresh token as bearer token
+	token, err := auth.GetBearerToken(r.Header)
 
-	if len(r.Header.Values("Authorization")) <= 0 {
-		err := marshalHelper(w ,r.Header.Values("Authorization"), http.StatusUnauthorized)
-		if err != nil {
-			fmt.Printf("revoke token: %v", err)
-		}
-		return
-	}
-
-	tokenString := r.Header.Values("Authorization")[0]
-
-	token := strings.TrimSpace(strings.TrimPrefix(tokenString, "Bearer "))
-
-	if token == "" {
+	if err != nil {
 		err := marshalHelper(w ,token, http.StatusUnauthorized)
 		if err != nil {
 			fmt.Printf("revoke token: %v", err)
@@ -600,7 +677,7 @@ func (cfg *apiConfig) tokenRevokeHandler (w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err := cfg.db.RevokeToken(r.Context(), token)
+	err = cfg.db.RevokeToken(r.Context(), token)
 
 	if err != nil {
 		err := marshalHelper(w ,token, http.StatusUnauthorized)
@@ -613,6 +690,7 @@ func (cfg *apiConfig) tokenRevokeHandler (w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 }
+
 
 func marshalHelper (w http.ResponseWriter, res any, statusCode int) error {
 	data, err := json.Marshal(res)
