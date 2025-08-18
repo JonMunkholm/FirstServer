@@ -121,6 +121,7 @@ func main() {
 	api.HandleFunc("POST /chirps", apiConfig.chirpHandler)
 	api.HandleFunc("GET /chirps", apiConfig.allChirpsHandler)
 	api.HandleFunc("GET /chirps/{chirpID}", apiConfig.getChirpHandler)
+	api.HandleFunc("DELETE /chirps/{chirpID}", apiConfig.deleteChirpHandler)
 
 
 
@@ -361,6 +362,62 @@ func (cfg *apiConfig) getChirpHandler (w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 		fmt.Printf("get chirp: %v", err)
 	}
+}
+
+
+func (cfg *apiConfig) deleteChirpHandler (w http.ResponseWriter, r *http.Request) {
+	//expecting session/JWT token as bearer token
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+
+	if err != nil {
+		log.Printf("Failed to parse chirp ID")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	bearerToken, err := auth.GetBearerToken(r.Header)
+
+	if err != nil {
+		log.Printf("missing bearer token: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("Failed to validate user: %v", err)
+		return
+	}
+
+	chirp, err := cfg.db.GetChirp(r.Context(), chirpID)
+
+	if err != nil {
+		log.Printf("no chirp found: %v", err)
+    	w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	if chirp.UserID != userID {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	err = cfg.db.DeleteChirp(r.Context(), database.DeleteChirpParams{
+		ID: chirp.ID,
+		UserID: userID,
+	})
+
+	if err != nil {
+		log.Printf("Failed to delete chirp: %v", err)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 
@@ -687,7 +744,6 @@ func (cfg *apiConfig) tokenRevokeHandler (w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNoContent)
 }
 
