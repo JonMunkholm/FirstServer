@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -26,6 +27,7 @@ fileserverHits 	atomic.Int32
 db      		*database.Queries
 platform    	string
 secret  		string
+polkaKey        string
 }
 
 type userPerams struct {
@@ -45,11 +47,19 @@ type chirpResponse struct {
 	UserID    uuid.UUID		`json:"user_id"`
 }
 
+type isChirpRedWebhookRequest struct {
+	Event string `json:"event"`
+	Data  struct {
+		UserID string `json:"user_id"`
+	} `json:"data"`
+}
+
 type userInfoResponse struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID        	uuid.UUID `json:"id"`
+	CreatedAt 	time.Time `json:"created_at"`
+	UpdatedAt 	time.Time `json:"updated_at"`
+	Email     	string    `json:"email"`
+	IsChirpRed	bool	  `json:"is_chirpy_red"`
 }
 
 type userSessionResponse struct {
@@ -57,8 +67,9 @@ type userSessionResponse struct {
 	CreatedAt 		time.Time `json:"created_at"`
 	UpdatedAt 		time.Time `json:"updated_at"`
 	Email     		string    `json:"email"`
-	Token	  		string	`json:"token"`
-	RefreshToken 	string  `json:"refresh_token"`
+	Token	  		string	  `json:"token"`
+	RefreshToken 	string    `json:"refresh_token"`
+	IsChirpRed		bool	  `json:"is_chirpy_red"`
 }
 
 type refreshTokenResponse struct {
@@ -97,6 +108,12 @@ func main() {
 		log.Fatal("JWT_SECRET must be set")
 	}
 
+	polka := os.Getenv("POLKA_KEY")
+
+	if jwtSecret == "" {
+		log.Fatal("POLKA_KEY must be set")
+	}
+
 
 	dbQueries := database.New(db)
 
@@ -105,6 +122,7 @@ func main() {
 	apiConfig.db = dbQueries
 	apiConfig.platform = platform
 	apiConfig.secret = jwtSecret
+	apiConfig.polkaKey = polka
 
 	mux := http.NewServeMux()
 	api := http.NewServeMux()
@@ -122,6 +140,7 @@ func main() {
 	api.HandleFunc("GET /chirps", apiConfig.allChirpsHandler)
 	api.HandleFunc("GET /chirps/{chirpID}", apiConfig.getChirpHandler)
 	api.HandleFunc("DELETE /chirps/{chirpID}", apiConfig.deleteChirpHandler)
+	api.HandleFunc("POST /polka/webhooks", apiConfig.isChirpRedWebhooksHandler)
 
 
 
@@ -479,6 +498,7 @@ func (cfg *apiConfig) makeUserHandler (w http.ResponseWriter, r *http.Request) {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		IsChirpRed: user.IsChirpRed,
 	}
 
 
@@ -570,6 +590,7 @@ func (cfg *apiConfig) loginHandler (w http.ResponseWriter, r *http.Request) {
 		Email: user.Email,
 		Token: token,
 		RefreshToken: refreshToken,
+		IsChirpRed: user.IsChirpRed,
 	}
 
 
@@ -664,6 +685,7 @@ func (cfg *apiConfig) updateUserHandler (w http.ResponseWriter, r *http.Request)
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		IsChirpRed: user.IsChirpRed,
 	}
 
 
@@ -675,6 +697,65 @@ func (cfg *apiConfig) updateUserHandler (w http.ResponseWriter, r *http.Request)
 
 }
 
+
+func (cfg *apiConfig) isChirpRedWebhooksHandler (w http.ResponseWriter, r *http.Request) {
+	//expects APIKey to be passed in header as Authorization: ApiKey <key>
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+
+	if err != nil || apiKey != cfg.polkaKey {
+		log.Printf("Rejected request, invalid APIKey")
+
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	Decoder := json.NewDecoder(r.Body)
+
+	var request isChirpRedWebhookRequest
+
+	err = Decoder.Decode(&request)
+
+	if err != nil {
+		log.Printf("Failed to decode request: %v", err)
+
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if request.Event != "user.upgraded" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	userID, err := uuid.Parse(request.Data.UserID)
+
+	if err != nil {
+		log.Printf("Failed parse user id: %v", err)
+
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = cfg.db.UpgradeChirpRed(r.Context(), userID)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		log.Printf("no rows found: %v", err)
+
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	if err != nil {
+		log.Printf("error upgrading user: %v", err)
+
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (cfg *apiConfig) tokenRefreshHandler (w http.ResponseWriter, r *http.Request) {
 	//expecting refresh token as bearer token
