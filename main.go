@@ -324,7 +324,20 @@ func (cfg *apiConfig) chirpHandler (w http.ResponseWriter, r *http.Request){
 
 func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) {
 
-	allChirps, err := cfg.db.GetAllChirps(r.Context())
+	queryParams := r.URL.Query()
+
+	// Returns the first value associated with "author_id"
+	authorId := queryParams.Get("author_id")
+
+	userID, err := uuid.Parse(authorId)
+
+	if err != nil{
+	log.Printf("Failed to parse author id chirps")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	allChirps, err := cfg.db.GetAllChirps(r.Context(), userID)
 
 	if err != nil {
 		log.Printf("Failed to retreive chirps")
