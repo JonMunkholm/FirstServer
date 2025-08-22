@@ -356,5 +356,5 @@ Authorization: ApiKey <apiKey>
 curl -X POST http://localhost:<port>/api/polka/webhooks \
   -H "Content-Type: application/json" \
   -H "Authorization: ApiKey <apiKey>" \
-  -d '{"event": "UpdateChirpRed", "data": {"user_id": "123"}}'
+  -d '{"event": "user.upgraded", "data": {"user_id": "123"}}'
 ```
