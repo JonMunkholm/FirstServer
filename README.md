@@ -1,298 +1,360 @@
-# Server
+# Server Documentation
 
-## Description
+## Overview
 
-### How it was coded
+This server powers **Chirpy**, a chat service that allows messages up to 140 characters.
 
-1. [Golang](https://go.dev/)
-1. [Postgresql](https://www.postgresql.org/) - local DB
-1. [SQLC](https://sqlc.dev/) - automated code gen for generating DB querying functions from SQL
-1. [Goose](https://github.com/pressly/goose) - used as a DB migration tool
+### Tech Stack
 
-### What does it do
+- [Golang](https://go.dev/)
+- [PostgreSQL](https://www.postgresql.org/) — local DB
+- [SQLC](https://sqlc.dev/) — generates DB query functions from SQL
+- [Goose](https://github.com/pressly/goose) — DB migration tool
 
-Is the backend for a chat service, which allows for messages up to 140 characters.
+---
 
-## End points
+## Endpoints
 
-### Main page - place holder
+### Main Page
 
-1. Place holder for front end, displays **"Welcome to Chirpy"**.
+**GET** `/app`
+Displays a placeholder page with **"Welcome to Chirpy"**.
 
-`localhoast:<portNum>/app`
+```bash
+curl http://localhost:<port>/app
+```
 
-### Admin - for development or tracking
+---
 
-1. (GET Method) Visiting this URL will display the number of times the main app page has been visited (ie. the number of server Hits for the main page). Also available as an end point and will return status ok if successfuly queried.
+### Admin Endpoints
 
-`localhoast:<portNum>/admin/metrics`
+#### 1. Metrics
 
-2. (POST Method) Reset endpoint to reset DB tables - useful for testing.
+**GET** `/admin/metrics`
+Returns the number of times the main app page has been visited.
 
-`localhoast:<portNum>/admin/reset`
+**Response:**
 
-### API End Points - the meat and potatos of the server
+```json
+{
+  "status": "ok",
+  "hits": 42
+}
+```
 
-1. (POST Method) Create a user - hashes password and stores in DB for login validation later.
+```bash
+curl http://localhost:<port>/admin/metrics
+```
 
-`localhoast:<portNum>/api/users`
+---
 
-    1. expected request body format
+#### 2. Reset
 
-    `{
-        password: <1234SomePassword>
-        email: <email@something.com>
-    }`
+**POST** `/admin/reset`
+Resets all DB tables (useful for testing).
 
-    1. response body
+```bash
+curl -X POST http://localhost:<port>/admin/reset
+```
 
-    if request was good (201)
+---
 
-    `{
-        id: <UserId>
-        created_at: <Time>
-        updated_at: <Time>
-        email: <email>
-        is_chirpy_red: <bool>
-    }`
+### API Endpoints
 
-    if request was bad (4XX)
+---
 
-    `{
-        error: <error>
-    }`
+#### 1. Create User
 
-2.  (POST Method) Login request - validates, user email and password against email and hashed password in DB. Generates and returns session, refresh token(s) and if the account is "chirp red".
+**POST** `/api/users`
+Creates a new user, hashes password, stores in DB.
 
-        `localhoast:<portNum>/api/login`
+**Request:**
 
-        1. expected request body format
+```json
+{
+  "password": "1234SomePassword",
+  "email": "email@something.com"
+}
+```
 
-        `{
-        password: <1234SomePassword>
-        email: <email@something.com>
+**Response (201):**
 
-    }`
+```json
+{
+  "id": "UserId",
+  "created_at": "Time",
+  "updated_at": "Time",
+  "email": "email@something.com",
+  "is_chirpy_red": false
+}
+```
 
-        1. response body
+```bash
+curl -X POST http://localhost:<port>/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"password": "1234SomePassword", "email": "email@something.com"}'
+```
 
-        if request was good (200)
+---
 
-        `{
-        id: <UserId>
-        created_at: <Time>
-        updated_at: <Time>
-        email: <email>
-        token: <sessionToken>
-        refresh_token: <refreshToken>
-        is_chirpy_red: <bool>
+#### 2. Login
 
-    }`
+**POST** `/api/login`
+Validates credentials and returns a session + refresh token.
 
-        if request was bad (4XX)
+**Request:**
 
-        `{
-        error: <error>
+```json
+{
+  "password": "1234SomePassword",
+  "email": "email@something.com"
+}
+```
 
-    }`
+**Response (200):**
 
-3.  (PUT Method) Update user request - validates, session token and password against hashed password in DB. Retreives user_id from DB, uses this user_id to update the user email/password in the DB and returns an updated user object.
+```json
+{
+  "id": "UserId",
+  "created_at": "Time",
+  "updated_at": "Time",
+  "email": "email@something.com",
+  "token": "sessionToken",
+  "refresh_token": "refreshToken",
+  "is_chirpy_red": false
+}
+```
 
-        `localhoast:<portNum>/api/users`
+```bash
+curl -X POST http://localhost:<port>/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "1234SomePassword", "email": "email@something.com"}'
+```
 
-        1. expected request body format
+---
 
-        `{
-        password: <1234SomePassword>
-        email: <email@something.com>
+#### 3. Update User
 
-    }`
+**PUT** `/api/users`
+Updates user email/password. Requires session token.
 
-        **AND**
+**Headers:**
 
-        Request Header
+```
+Authorization: Bearer <sessionToken>
+```
 
-                `Authorization: Bearer <sessionToken/JWT>`
+**Request:**
 
-        1. response body
+```json
+{
+  "password": "newPassword",
+  "email": "new@email.com"
+}
+```
 
-        if request was good (200)
+**Response (200):**
 
-        `{
-        id: <UserId>
-        created_at: <Time>
-        updated_at: <Time>
-        email: <email(updated)>
-        is_chirpy_red: <bool>
+```json
+{
+  "id": "UserId",
+  "created_at": "Time",
+  "updated_at": "Time",
+  "email": "new@email.com",
+  "is_chirpy_red": false
+}
+```
 
-    }`
+```bash
+curl -X PUT http://localhost:<port>/api/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <sessionToken>" \
+  -d '{"password": "newPassword", "email": "new@email.com"}'
+```
 
-        if request was bad (4XX)
+---
 
-        `{
-        error: <error>
+#### 4. Refresh Token
 
-    }`
+**POST** `/api/refresh`
+Generates a new session token from a refresh token.
 
-4.  (POST Method) Token Refresh request - validates the user refresh token and generates a new session/JWT token and returns the token in the response body.
+**Headers:**
 
-        `localhoast:<portNum>/api/refresh`
+```
+Authorization: Bearer <refreshToken>
+```
 
-        1. expected request header to contain the refresh token from loging in
+**Response (200):**
 
-           `Authorization: Bearer <RefreshToken>`
+```json
+{
+  "token": "newSessionToken"
+}
+```
 
-        1. response body
+```bash
+curl -X POST http://localhost:<port>/api/refresh \
+  -H "Authorization: Bearer <refreshToken>"
+```
 
-        if request was good (200)
+---
 
-        `{
-        token: <sessionToken>
+#### 5. Revoke Token
 
-    }`
+**POST** `/api/revoke`
+Revokes a refresh token. No body in response.
 
-        if request was bad (4XX)
+**Headers:**
 
-5.  (POST Method) Token Revoke request - Revokes the access of a refresh token, does not return a response body, but will return a header http.status response.
+```
+Authorization: Bearer <refreshToken>
+```
 
-        `localhoast:<portNum>/api/revoke`
+**Response:** `204 No Content`
 
-        1. expected request header to contain the refresh token from loging in
+```bash
+curl -X POST http://localhost:<port>/api/revoke \
+  -H "Authorization: Bearer <refreshToken>"
+```
 
-           `Authorization: Bearer <RefreshToken>`
+---
 
-        1. response body
+#### 6. Create Chirp
 
-        if request was good (204)
+**POST** `/api/chirps`
+Creates a new chirp (max 140 chars). Requires session token.
 
+**Headers:**
 
-        if request was bad (4XX)
+```
+Authorization: Bearer <sessionToken>
+```
 
-6.  (POST Method) Make Chirps request - Validates session/JWT token and uses token to retreive userID from DB. THen uses userID and requesxt body to create chirp and add to DB. Returns Chirp information in response.
+**Request:**
 
-        `localhoast:<portNum>/api/Chirps`
+```json
+{
+  "body": "Hello Chirpy!"
+}
+```
 
-        1. expected request body format
+**Response (201):**
 
-        `{
-        body: <140Chars>
+```json
+{
+  "id": "id",
+  "created_at": "Time",
+  "updated_at": "Time",
+  "body": "Hello Chirpy!",
+  "user_id": "UserId"
+}
+```
 
-    }`
+```bash
+curl -X POST http://localhost:<port>/api/chirps \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <sessionToken>" \
+  -d '{"body": "Hello Chirpy!"}'
+```
 
-        **AND**
+---
 
-        Request Header
+#### 7. Get Chirps
 
-                `Authorization: Bearer <sessionToken/JWT>`
+**GET** `/api/chirps`
+Returns all chirps or filters by `author_id`.
 
-        1. response body
+**Query Param:**
 
-        if request was good (201)
+```
+/api/chirps?author_id=<authorID>
+```
 
-        `{
-            id: <id>
-            created_at: <created_at>
-            updated_at: <updated_at>
-            body: <body>
-            user_id: <user_id>
-        }`
+**Response (200):**
 
-        if request was bad (4XX)
+```json
+[
+  {
+    "id": "id",
+    "created_at": "Time",
+    "updated_at": "Time",
+    "body": "Hello Chirpy!",
+    "user_id": "UserId"
+  }
+]
+```
 
-        `{
-        error: <error>
+```bash
+curl http://localhost:<port>/api/chirps
+curl http://localhost:<port>/api/chirps?author_id=123
+```
 
-    }`
+---
 
-7.  (GET Method) Get all Chirps or all chirps attributed to a specific author if authorID is incluede in URL queries - Checks URL for query paramaters and gets the authorID if included. Then retreives all chirps with an optional filter including the authorID; if included filters for all chirps from that author, else returns all chirps in DB
+#### 8. Get Chirp by ID
 
-        `localhoast:<portNum>/api/Chirps`
+**GET** `/api/chirps/{chirpID}`
+Fetches a single chirp by ID.
 
-        1. optional query param in URL
+**Response (200):**
 
-        `localhoast:<portNum>/api/chirps?author_id=${authorID}`
+```json
+{
+  "id": "id",
+  "created_at": "Time",
+  "updated_at": "Time",
+  "body": "Hello Chirpy!",
+  "user_id": "UserId"
+}
+```
 
-        1. response body
+```bash
+curl http://localhost:<port>/api/chirps/123
+```
 
-        if request was good (200)
+---
 
-        `[{
-        id: <id>
-        created_at: <created_at>
-        updated_at: <updated_at>
-        body: <body>
-        user_id: <user_id>
+#### 9. Delete Chirp
 
-    }, {
-    id: <id>
-    created_at: <created_at>
-    updated_at: <updated_at>
-    body: <body>
-    user_id: <user_id>
-    }, ...]`
+**DELETE** `/api/chirps/{chirpID}`
+Deletes a chirp by ID.
 
-        if request was bad (4XX)
+**Response:** `204 No Content`
 
-        `{
-        error: <error>
+```bash
+curl -X DELETE http://localhost:<port>/api/chirps/123
+```
 
-}`
+---
 
-8.  (GET Method) Get a specific Chirp using the ChripID in the request - Retreives a specific chirp from the DB if the chirp exists.
+#### 10. Webhook (Polka)
 
-        `localhoast:<portNum>/api/Chirps/{chirpID}`
+**POST** `/api/polka/webhooks`
+Flags a user as **ChirpyRed** after a (mock) Polka payment.
 
-        1. response body
+**Headers:**
 
-        if request was good (200)
+```
+Authorization: ApiKey <apiKey>
+```
 
-        `{
-        id: <id>
-        created_at: <created_at>
-        updated_at: <updated_at>
-        body: <body>
-        user_id: <user_id>
+**Request:**
 
-    }`
+```json
+{
+  "event": "UpdateChirpRed",
+  "data": {
+    "user_id": "UserId"
+  }
+}
+```
 
-        if request was bad (4XX)
+**Response:** `204 No Content`
 
-        `{
-        error: <error>
-
-}`
-
-9.  (DELETE Method) Deletes a specific Chirp using the ChripID in the request - Removes a specific chirp from the DB if the chirp exists.
-
-    `localhoast:<portNum>/api/Chirps/{chirpID}`
-
-    1. response body
-
-    if request was good (204)
-
-    if request was bad (4XX)
-
-10. (POST Method) Hypothetical Webhook end point that flags an account as ChirpRed if they have paid via Polka (not a real payment processor). Validates the session API key against an API key from the request header and checks the request body for the userID. Depending on request body, the account will be marked as ChirpRed. The API keys must match else the request will fail.
-
-`localhoast:<portNum>/api/polka/webhooks`
-
-    1.  expected request body format
-
-        `{
-        event: <UpdateChirpRed>
-        data: {
-            user_id: <userID>
-        }
-    }`
-
-    **AND**
-
-    Request Header
-
-                `Authorization: ApiKey <apiKey>`
-
-    1. response body
-
-        if request was good (204)
-
-        if request was bad (4XX)
+```bash
+curl -X POST http://localhost:<port>/api/polka/webhooks \
+  -H "Content-Type: application/json" \
+  -H "Authorization: ApiKey <apiKey>" \
+  -d '{"event": "UpdateChirpRed", "data": {"user_id": "123"}}'
+```
