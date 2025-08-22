@@ -294,6 +294,7 @@ Returns all chirps or filters by `author_id` optional `sort` by "asc" (default) 
 ```bash
 curl http://localhost:<port>/api/chirps
 curl http://localhost:<port>/api/chirps?author_id=123
+curl http://localhost:<port>/api/chirps?sort=desc
 ```
 
 ---
