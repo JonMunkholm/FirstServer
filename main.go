@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -332,12 +333,16 @@ func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) 
 	userID, err := uuid.Parse(authorId)
 
 	if err != nil{
-	log.Printf("Failed to parse author id chirps")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		log.Printf("No author defined")
 	}
 
-	allChirps, err := cfg.db.GetAllChirps(r.Context(), userID)
+	sortOrder := queryParams.Get("sort")
+
+	if sortOrder != "desc" {
+		sortOrder = "asc"
+	}
+
+	allChirps, err := cfg.db.GetAllChirps(r.Context())
 
 	if err != nil {
 		log.Printf("Failed to retreive chirps")
@@ -345,9 +350,29 @@ func (cfg *apiConfig) allChirpsHandler (w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var filteredChirps []database.Chirp
+
+	if authorId != "" && err == nil {
+		for _, chirp := range allChirps {
+			if chirp.UserID == userID {
+				filteredChirps = append(filteredChirps, chirp)
+			}
+		}
+	} else {
+		// no author_id: use all chirps
+		filteredChirps = allChirps
+	}
+
+	sort.Slice(filteredChirps, func(i, j int) bool {
+		if sortOrder == "asc" {
+			return filteredChirps[i].CreatedAt.Before(filteredChirps[j].CreatedAt)
+		}
+			return filteredChirps[i].CreatedAt.After(filteredChirps[j].CreatedAt)
+		})
+
 	var res []chirpResponse;
 
-	for _, chirp := range allChirps {
+	for _, chirp := range filteredChirps {
 		res = append(res, chirpResponse{
 			ID:        chirp.ID,
 			CreatedAt: chirp.CreatedAt,

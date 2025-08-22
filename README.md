@@ -263,12 +263,18 @@ curl -X POST http://localhost:<port>/api/chirps \
 #### 7. Get Chirps
 
 **GET** `/api/chirps`
-Returns all chirps or filters by `author_id`.
+Returns all chirps or filters by `author_id` optional `sort` by "asc" (default) or "desc".
 
 **Query Param:**
 
 ```
 /api/chirps?author_id=<authorID>
+```
+
+**OR**
+
+```
+/api/chirps?sort=<sort>
 ```
 
 **Response (200):**
